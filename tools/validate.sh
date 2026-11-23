@@ -98,6 +98,10 @@ run_static_checks() {
         tests/test_bsp_es8311_sleep_check.c components/bsp/src/bsp_es8311_sleep_check.c \
         -o "${test_dir}/test_bsp_es8311_sleep_check"
     "${test_dir}/test_bsp_es8311_sleep_check"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_minesweeper_model.c main/minesweeper_model.c \
+        -o "${test_dir}/test_minesweeper_model"
+    "${test_dir}/test_minesweeper_model"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
         -Itests/battery_stubs -Itests/bsp_stubs -Icomponents/bsp/include \
         tests/test_bsp_battery.c -o "${test_dir}/test_bsp_battery"
