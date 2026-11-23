@@ -12,10 +12,17 @@ Keep each asset in the matching subdirectory and document its destination, namin
 
 Store reusable font files and generated font sources in `fonts/`.
 
+| File | Source and license | Use and generation |
+| --- | --- | --- |
+| [`fonts/SourceHanSansSC-Regular.otf`](fonts/SourceHanSansSC-Regular.otf) | Adobe Source Han Sans SC Regular (CN subset), [SIL OFL 1.1](https://github.com/adobe-fonts/source-han-sans/blob/release/LICENSE.txt); redistribution permitted | Conversion input; not compiled into firmware |
+| [`fonts/app_font_cjk_14.c`](fonts/app_font_cjk_14.c) | Generated from the OTF above with `lv_font_conv` 1.5.3 (`--range 0x20-0x7E --symbols <app inventory> --size 14 --bpp 4 --no-compress --no-prefilter --format lvgl`) | Minesweeper UI 14 px font (`s_font_14`); compiled via `main/CMakeLists.txt` |
+| [`fonts/app_font_cjk_20.c`](fonts/app_font_cjk_20.c) | Same, `--size 20` | Minesweeper UI 20 px font (`s_font_20`); compiled via `main/CMakeLists.txt` |
+
 - Use descriptive names that include the family, weight, size, and format when relevant.
 - Document the source, license, character range, conversion command, and expected destination.
 - Check Flash and internal-RAM impact before adding a font; the ESP32-C3 has no PSRAM.
 - Do not commit fonts whose license does not permit redistribution.
+- The character inventory is the set of non-ASCII literals in `main/`; after changing UI text, regenerate both sizes with the same command (recorded in each generated header) and let `tools/check_glyphs.py` verify coverage in `./tools/validate.sh --static`.
 
 ## Images
 

@@ -27,6 +27,14 @@ The cursor wraps around the board edges. On the title screen, OK starts a game.
 On the end overlay, OK starts a new game and a long press on OK returns to the
 title screen.
 
+## UI language
+
+The entire UI is in Simplified Chinese. Labels use application subset fonts
+(`assets/fonts/app_font_cjk_14.c` / `app_font_cjk_20.c`) generated from Adobe
+Source Han Sans SC with `lv_font_conv` 1.5.3, covering every non-ASCII literal
+in `main/` plus printable ASCII; Montserrat remains only as a fallback for LVGL
+symbols. Static coverage is gated by `tools/check_glyphs.py`.
+
 ## Records
 
 Best win time, win count, and total games are stored in NVS and survive power

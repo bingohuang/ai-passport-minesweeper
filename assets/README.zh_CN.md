@@ -10,10 +10,19 @@
 
 可复用的字库文件与生成的字库源码放在 `fonts/`。
 
+| 文件 | 来源与许可 | 用途与生成方式 |
+| --- | --- | --- |
+| [`fonts/SourceHanSansSC-Regular.otf`](fonts/SourceHanSansSC-Regular.otf) | Adobe 思源黑体 SC Regular（CN 子集），[SIL OFL 1.1](https://github.com/adobe-fonts/source-han-sans/blob/release/LICENSE.txt)，允许再分发 | 转换输入文件，不编入固件 |
+| [`fonts/app_font_cjk_14.c`](fonts/app_font_cjk_14.c) | 用 `lv_font_conv` 1.5.3 由上述 OTF 生成（`--range 0x20-0x7E --symbols <应用字表> --size 14 --bpp 4 --no-compress --no-prefilter --format lvgl`） | 扫雷界面 14px 字体（`s_font_14`），经 `main/CMakeLists.txt` 编译 |
+| [`fonts/app_font_cjk_20.c`](fonts/app_font_cjk_20.c) | 同上，`--size 20` | 扫雷界面 20px 字体（`s_font_20`），经 `main/CMakeLists.txt` 编译 |
+
 - 命名要能反映字族、字重、字级与格式。
 - 记录来源、许可、字符范围、转换命令与目标放置路径。
 - 添加字库前评估 Flash 与内部 RAM 影响；ESP32-C3 无 PSRAM。
 - 不提交许可不允许分发的字库。
+- 字符字表为 `main/` 中非 ASCII 字面值合集；修改界面文案后按各生成文件头记录的
+  命令重新生成两个字级，并由 `./tools/validate.sh --static` 中的
+  `tools/check_glyphs.py` 校验覆盖。
 
 ## 图片（images）
 

@@ -24,6 +24,13 @@
 光标在棋盘边缘环绕。标题页单击 OK 开始游戏;结算浮层上单击 OK 再来一局,
 长按 OK 返回标题页。
 
+## 界面语言
+
+界面全部为简体中文。文字使用应用子集字体（`assets/fonts/app_font_cjk_14.c`、
+`app_font_cjk_20.c`），由 Adobe 思源黑体 SC 经 `lv_font_conv` 1.5.3 生成，
+覆盖 `main/` 中全部非 ASCII 字面值与可打印 ASCII;Montserrat 仅作为 LVGL
+符号的 fallback。字形覆盖由 `tools/check_glyphs.py` 静态门禁校验。
+
 ## 战绩
 
 最佳用时、胜场、总场次保存在 NVS 中,掉电不丢失;标题页与结算浮层都会显示。

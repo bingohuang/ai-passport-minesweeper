@@ -4,10 +4,11 @@
 //   标题页:字标 + 战绩面板 + 开始按钮;
 //   游戏页:状态条(剩余旗数/表情/计时)、9x9 棋盘(I4 调色板 canvas 自绘)、底部提示;
 //   结算浮层:胜负 + 本局用时 + 战绩。
-// 中文字形走内置思源黑体 SC 16(Montserrat fallback),见 app_fonts_init()。
+// 中文字形走应用子集字体 assets/fonts/app_font_cjk_{14,20}.c
+// (思源黑体 SC,lv_font_conv 1.5.3 生成;Montserrat 仅作 ASCII/符号 fallback),见 app_fonts_init()。
 //
 // 按键(全局三键):
-//   单击 UP/DOWN = 光标上/下;长按 = 左/右(按住每 150ms 重复)
+//   单击 UP/DOWN = 光标上/下;长按 = 左/右移一格(不自动重复)
 //   单击 OK = 揭示;长按 OK = 插旗/拔旗
 #include "app_minesweeper.h"
 
@@ -141,17 +142,20 @@ static QueueHandle_t s_input_queue;
 LV_DRAW_BUF_DEFINE_STATIC(s_board_buf, BOARD_PX, BOARD_PX, LV_COLOR_FORMAT_I4);
 
 // ---------------------------------------------------------------------------
-// 字体:Montserrat 负责数字/拉丁,思源黑体 SC 16 经 fallback 补中文。
+// 字体:应用子集字体(思源黑体 SC,覆盖界面全部汉字与 ASCII)为主,
+// Montserrat 只补 LVGL 符号等子集外的字形。子集由 lv_font_conv 1.5.3 生成,
 // 可写描述符 + fallback 的写法见 docs/development/engineering/lvgl-chinese-fonts.md。
 // ---------------------------------------------------------------------------
+LV_FONT_DECLARE(app_font_cjk_14);
+LV_FONT_DECLARE(app_font_cjk_20);
 static lv_font_t s_font_14;
 static lv_font_t s_font_20;
 
 static void app_fonts_init(void) {
-    s_font_14 = lv_font_montserrat_14;
-    s_font_14.fallback = &lv_font_source_han_sans_sc_16_cjk;
-    s_font_20 = lv_font_montserrat_20;
-    s_font_20.fallback = &lv_font_source_han_sans_sc_16_cjk;
+    s_font_14 = app_font_cjk_14;
+    s_font_14.fallback = &lv_font_montserrat_14;
+    s_font_20 = app_font_cjk_20;
+    s_font_20.fallback = &lv_font_montserrat_20;
 }
 
 // ---------------------------------------------------------------------------
