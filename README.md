@@ -17,7 +17,7 @@ all safe cells to win; hit a mine and the board shows every unflagged mine.
 
 ## Controls
 
-| Button | Click | Long press (hold to repeat) |
+| Button | Click | Long press |
 | --- | --- | --- |
 | UP | Move cursor up | Move cursor left |
 | DOWN | Move cursor down | Move cursor right |

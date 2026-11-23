@@ -1,9 +1,10 @@
 // main/app_minesweeper.c —— 扫雷应用实现(见 app_minesweeper.h)。
 //
-// 界面为暗色主题的全新设计,不使用基线 demo 的 ui_pixel 外壳:
-//   标题页:字标 + 战绩面板 + 操作提示;
+// 界面为暗色主题的全新设计,不使用基线 demo 的 ui_pixel 外壳,中文界面:
+//   标题页:字标 + 战绩面板 + 开始按钮;
 //   游戏页:状态条(剩余旗数/表情/计时)、9x9 棋盘(I4 调色板 canvas 自绘)、底部提示;
 //   结算浮层:胜负 + 本局用时 + 战绩。
+// 中文字形走内置思源黑体 SC 16(Montserrat fallback),见 app_fonts_init()。
 //
 // 按键(全局三键):
 //   单击 UP/DOWN = 光标上/下;长按 = 左/右(按住每 150ms 重复)
@@ -77,7 +78,6 @@ static const uint32_t PALETTE[] = {
     [PAL_DIGIT8] = 0xA6B0BC,
 };
 
-#define REPEAT_MS     150  // 长按保持时的移动重复间隔
 #define INPUT_DEPTH   12
 #define NS            "mines"  // NVS 命名空间
 #define KEY_BEST      "best_s"
@@ -93,12 +93,12 @@ typedef enum {
 } app_screen_t;
 
 typedef enum {
-    RPT_NONE = 0,
-    RPT_UP,
-    RPT_DOWN,
-    RPT_LEFT,
-    RPT_RIGHT,
-} repeat_dir_t;
+    MV_NONE = 0,
+    MV_UP,
+    MV_DOWN,
+    MV_LEFT,
+    MV_RIGHT,
+} move_dir_t;
 
 typedef struct {
     bsp_btn_t btn;
@@ -116,8 +116,6 @@ static bool s_board_dirty = true;
 static bool s_end_recorded;
 static int64_t s_start_us;
 static uint32_t s_elapsed_s;
-static repeat_dir_t s_repeat = RPT_NONE;
-static int64_t s_last_repeat_us;
 static uint32_t s_last_tick_ms;   // 计时条刷新节流
 static int s_last_soc = -2;       // 电量刷新节流;-2 = 尚未读
 
@@ -141,6 +139,20 @@ static lv_timer_t *s_pump_timer;
 static QueueHandle_t s_input_queue;
 
 LV_DRAW_BUF_DEFINE_STATIC(s_board_buf, BOARD_PX, BOARD_PX, LV_COLOR_FORMAT_I4);
+
+// ---------------------------------------------------------------------------
+// 字体:Montserrat 负责数字/拉丁,思源黑体 SC 16 经 fallback 补中文。
+// 可写描述符 + fallback 的写法见 docs/development/engineering/lvgl-chinese-fonts.md。
+// ---------------------------------------------------------------------------
+static lv_font_t s_font_14;
+static lv_font_t s_font_20;
+
+static void app_fonts_init(void) {
+    s_font_14 = lv_font_montserrat_14;
+    s_font_14.fallback = &lv_font_source_han_sans_sc_16_cjk;
+    s_font_20 = lv_font_montserrat_20;
+    s_font_20.fallback = &lv_font_source_han_sans_sc_16_cjk;
+}
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -283,15 +295,15 @@ static void stats_save(void) {
 static void refresh_stats_labels(void) {
     char buf[24];
     if (s_stats.best_s == 0) {
-        lv_label_set_text(s_best_label, "BEST  --:--");
+        lv_label_set_text(s_best_label, "最佳 --:--");
     } else {
-        snprintf(buf, sizeof(buf), "BEST  %02u:%02u",
+        snprintf(buf, sizeof(buf), "最佳 %02u:%02u",
                  (unsigned)(s_stats.best_s / 60), (unsigned)(s_stats.best_s % 60));
         lv_label_set_text(s_best_label, buf);
     }
-    snprintf(buf, sizeof(buf), "WINS  %u", (unsigned)s_stats.wins);
+    snprintf(buf, sizeof(buf), "胜场 %u", (unsigned)s_stats.wins);
     lv_label_set_text(s_wins_label, buf);
-    snprintf(buf, sizeof(buf), "GAMES %u", (unsigned)s_stats.games);
+    snprintf(buf, sizeof(buf), "总局 %u", (unsigned)s_stats.games);
     lv_label_set_text(s_games_label, buf);
 }
 
@@ -329,19 +341,19 @@ static void title_screen_build(void) {
     lv_obj_set_style_bg_color(s_title_scr, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_bg_opa(s_title_scr, LV_OPA_COVER, 0);
 
-    lv_obj_t *title = label_create(s_title_scr, &lv_font_montserrat_20, COLOR_TEXT,
+    lv_obj_t *title = label_create(s_title_scr, &s_font_20, COLOR_TEXT,
                                    LV_ALIGN_TOP_MID, 0, 64);
-    lv_label_set_text(title, "MINESWEEPER");
-    lv_obj_t *sub = label_create(s_title_scr, &lv_font_montserrat_14, COLOR_DIM,
+    lv_label_set_text(title, "扫雷");
+    lv_obj_t *sub = label_create(s_title_scr, &s_font_14, COLOR_DIM,
                                  LV_ALIGN_TOP_MID, 0, 96);
-    lv_label_set_text(sub, "9x9  /  10 MINES");
+    lv_label_set_text(sub, "9x9 / 10 颗雷");
 
     lv_obj_t *panel = panel_create(s_title_scr, 30, 136, 180, 104);
-    s_best_label = label_create(panel, &lv_font_montserrat_20, COLOR_ACCENT,
+    s_best_label = label_create(panel, &s_font_20, COLOR_ACCENT,
                                 LV_ALIGN_TOP_LEFT, 16, 14);
-    s_wins_label = label_create(panel, &lv_font_montserrat_14, COLOR_TEXT,
+    s_wins_label = label_create(panel, &s_font_14, COLOR_TEXT,
                                 LV_ALIGN_TOP_LEFT, 16, 48);
-    s_games_label = label_create(panel, &lv_font_montserrat_14, COLOR_TEXT,
+    s_games_label = label_create(panel, &s_font_14, COLOR_TEXT,
                                  LV_ALIGN_TOP_LEFT, 16, 72);
     refresh_stats_labels();
 
@@ -350,12 +362,12 @@ static void title_screen_build(void) {
     lv_obj_set_style_border_width(hint, 0, 0);
     lv_obj_set_style_radius(hint, 15, 0);
     lv_obj_t *hint_label = lv_label_create(hint);
-    lv_obj_set_style_text_font(hint_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(hint_label, &s_font_14, 0);
     lv_obj_set_style_text_color(hint_label, lv_color_hex(COLOR_BG), 0);
-    lv_label_set_text(hint_label, "OK  START");
+    lv_label_set_text(hint_label, "开始游戏");
     lv_obj_center(hint_label);
 
-    s_batt_title_label = label_create(s_title_scr, &lv_font_montserrat_14, COLOR_DIM,
+    s_batt_title_label = label_create(s_title_scr, &s_font_14, COLOR_DIM,
                                       LV_ALIGN_TOP_RIGHT, -14, 12);
     battery_label_update(s_batt_title_label);
 }
@@ -365,17 +377,17 @@ static void game_screen_build(void) {
     lv_obj_set_style_bg_color(s_game_scr, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_bg_opa(s_game_scr, LV_OPA_COVER, 0);
 
-    s_mines_label = label_create(s_game_scr, &lv_font_montserrat_20, COLOR_ACCENT,
+    s_mines_label = label_create(s_game_scr, &s_font_20, COLOR_ACCENT,
                                  LV_ALIGN_TOP_LEFT, 16, HDR_Y);
-    s_face_label = label_create(s_game_scr, &lv_font_montserrat_20, COLOR_TEXT,
+    s_face_label = label_create(s_game_scr, &s_font_20, COLOR_TEXT,
                                 LV_ALIGN_TOP_MID, 0, HDR_Y);
-    s_timer_label = label_create(s_game_scr, &lv_font_montserrat_20, COLOR_TEXT,
+    s_timer_label = label_create(s_game_scr, &s_font_20, COLOR_TEXT,
                                  LV_ALIGN_TOP_RIGHT, -16, HDR_Y);
-    s_batt_game_label = label_create(s_game_scr, &lv_font_montserrat_14, COLOR_DIM,
+    s_batt_game_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
                                      LV_ALIGN_TOP_RIGHT, -14, 10);
-    s_hint_label = label_create(s_game_scr, &lv_font_montserrat_14, COLOR_DIM,
+    s_hint_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
                                 LV_ALIGN_TOP_MID, 0, FOOT_Y);
-    lv_label_set_text(s_hint_label, "OK dig   hold OK flag");
+    lv_label_set_text(s_hint_label, "单击挖雷  长按插旗");
 
     lv_obj_t *board_bg = panel_create(s_game_scr, BOARD_X - 3, BOARD_Y - 3,
                                       BOARD_PX + 6, BOARD_PX + 6);
@@ -394,13 +406,13 @@ static void game_screen_build(void) {
     // 结算浮层:先建后藏,胜负确定时弹出。
     s_overlay = panel_create(s_game_scr, 20, 110, 200, 100);
     lv_obj_set_style_bg_color(s_overlay, lv_color_hex(COLOR_PANEL), 0);
-    s_overlay_title = label_create(s_overlay, &lv_font_montserrat_20, COLOR_ACCENT,
+    s_overlay_title = label_create(s_overlay, &s_font_20, COLOR_ACCENT,
                                    LV_ALIGN_TOP_MID, 0, 12);
-    s_overlay_line = label_create(s_overlay, &lv_font_montserrat_14, COLOR_TEXT,
+    s_overlay_line = label_create(s_overlay, &s_font_14, COLOR_TEXT,
                                   LV_ALIGN_TOP_MID, 0, 44);
-    lv_obj_t *ov_hint = label_create(s_overlay, &lv_font_montserrat_14, COLOR_DIM,
+    lv_obj_t *ov_hint = label_create(s_overlay, &s_font_14, COLOR_DIM,
                                      LV_ALIGN_TOP_MID, 0, 70);
-    lv_label_set_text(ov_hint, "OK again   hold OK title");
+    lv_label_set_text(ov_hint, "单击再来  长按回标题");
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -421,16 +433,16 @@ static void header_refresh(void) {
 
 static void overlay_show(void) {
     char buf[48];
-    lv_label_set_text(s_overlay_title, s_game.state == MSW_WON ? "YOU WIN!" : "BOOM!");
+    lv_label_set_text(s_overlay_title, s_game.state == MSW_WON ? "你赢了!" : "踩雷了!");
     if (s_game.state == MSW_WON && s_stats.best_s == s_elapsed_s && s_elapsed_s > 0) {
-        snprintf(buf, sizeof(buf), "TIME %02u:%02u  NEW BEST",
+        snprintf(buf, sizeof(buf), "用时 %02u:%02u  新纪录!",
                  (unsigned)(s_elapsed_s / 60), (unsigned)(s_elapsed_s % 60));
     } else if (s_stats.best_s > 0) {
-        snprintf(buf, sizeof(buf), "TIME %02u:%02u  BEST %02u:%02u",
+        snprintf(buf, sizeof(buf), "用时 %02u:%02u  最佳 %02u:%02u",
                  (unsigned)(s_elapsed_s / 60), (unsigned)(s_elapsed_s % 60),
                  (unsigned)(s_stats.best_s / 60), (unsigned)(s_stats.best_s % 60));
     } else {
-        snprintf(buf, sizeof(buf), "TIME %02u:%02u",
+        snprintf(buf, sizeof(buf), "用时 %02u:%02u",
                  (unsigned)(s_elapsed_s / 60), (unsigned)(s_elapsed_s % 60));
     }
     lv_label_set_text(s_overlay_line, buf);
@@ -447,7 +459,6 @@ static void game_start(void) {
     s_elapsed_s = 0;
     s_start_us = 0;
     s_end_recorded = false;
-    s_repeat = RPT_NONE;
     s_board_dirty = true;
     if (s_screen != SCR_GAME) {
         s_screen = SCR_GAME;
@@ -459,7 +470,6 @@ static void game_start(void) {
 }
 
 static void back_to_title(void) {
-    s_repeat = RPT_NONE;
     s_screen = SCR_TITLE;
     refresh_stats_labels();
     battery_label_update(s_batt_title_label);
@@ -479,11 +489,6 @@ static void cursor_move(int dx, int dy) {
 static void pump(void) {
     input_event_t ev;
     while (xQueueReceive(s_input_queue, &ev, 0) == pdTRUE) {
-        if (ev.ev == BSP_BTN_RELEASE) {
-            s_repeat = RPT_NONE;
-            continue;
-        }
-
         if (s_screen == SCR_TITLE) {
             if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_OK) game_start();
             continue;
@@ -499,14 +504,16 @@ static void pump(void) {
             continue;
         }
 
-        // 只认单击与长按;PRESS/DOUBLE 等原样忽略,避免一次按键两次移动。
+        // 只认单击与长按;PRESS/DOUBLE/RELEASE 等原样忽略。
+        // 单击=上下,长按=左右;都只走一步,不自动重复——
+        // 横向移动代价已由边缘环绕补偿,重复移动反而难停在一格上。
         if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_LONG) continue;
 
         const bool is_long = (ev.ev == BSP_BTN_LONG);
-        repeat_dir_t dir = RPT_NONE;
+        move_dir_t dir = MV_NONE;
         switch (ev.btn) {
-        case BSP_BTN_UP:    dir = is_long ? RPT_LEFT  : RPT_UP;   break;
-        case BSP_BTN_DOWN:  dir = is_long ? RPT_RIGHT : RPT_DOWN; break;
+        case BSP_BTN_UP:    dir = is_long ? MV_LEFT  : MV_UP;   break;
+        case BSP_BTN_DOWN:  dir = is_long ? MV_RIGHT : MV_DOWN; break;
         case BSP_BTN_OK:
             if (is_long) {
                 if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
@@ -525,34 +532,12 @@ static void pump(void) {
             }
             continue;
         }
-        if (dir == RPT_NONE) continue;
-        // 方向:立即走一步;长按则挂起重复,松手(RELEASE)即停。
         switch (dir) {
-        case RPT_UP:    cursor_move(0, -1); break;
-        case RPT_DOWN:  cursor_move(0, 1);  break;
-        case RPT_LEFT:  cursor_move(-1, 0); break;
-        case RPT_RIGHT: cursor_move(1, 0);  break;
+        case MV_UP:    cursor_move(0, -1); break;
+        case MV_DOWN:  cursor_move(0, 1);  break;
+        case MV_LEFT:  cursor_move(-1, 0); break;
+        case MV_RIGHT: cursor_move(1, 0);  break;
         default: break;
-        }
-        if (is_long) {
-            s_repeat = dir;
-            s_last_repeat_us = esp_timer_get_time();
-        }
-    }
-
-    // 长按重复移动
-    if (s_repeat != RPT_NONE && s_screen == SCR_GAME &&
-        (s_game.state == MSW_READY || s_game.state == MSW_PLAYING)) {
-        const int64_t now_us = esp_timer_get_time();
-        if (now_us - s_last_repeat_us >= (int64_t)REPEAT_MS * 1000) {
-            s_last_repeat_us = now_us;
-            switch (s_repeat) {
-            case RPT_UP:    cursor_move(0, -1); break;
-            case RPT_DOWN:  cursor_move(0, 1);  break;
-            case RPT_LEFT:  cursor_move(-1, 0); break;
-            case RPT_RIGHT: cursor_move(1, 0);  break;
-            default: break;
-            }
         }
     }
 
@@ -607,6 +592,7 @@ esp_err_t app_minesweeper_start(void) {
 
     // LV_DRAW_BUF_DEFINE_STATIC 不填 handlers,必须显式 INIT,否则
     // lv_canvas_set_draw_buf 会静默拒绝并在首次取回缓冲区时崩溃(真机复现)。
+    app_fonts_init();
     LV_DRAW_BUF_INIT_STATIC(s_board_buf);
 
     stats_load();
