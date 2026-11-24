@@ -352,11 +352,12 @@ static void battery_label_update(lv_obj_t *label) {
     }
 }
 
-// 底部提示随移动方向模式切换,箭头指示当前上/下键的实际走向。
+// 底部提示随移动方向模式切换,箭头指示当前上/下键的实际走向;
+// 动作描述统一按物理键位(上/中/下键)表述。
 static void hint_update(void) {
     lv_label_set_text(s_hint_label, s_horizontal
-                     ? "方向←→  长按↑挖雷  长按OK插旗"
-                     : "方向↑↓  长按↑挖雷  长按OK插旗");
+                     ? "方向←→  长按上键挖雷"
+                     : "方向↑↓  长按上键挖雷");
 }
 
 // ---------------------------------------------------------------------------
@@ -447,7 +448,7 @@ static void game_screen_build(void) {
     hint_update();
     s_hint2_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
                                  LV_ALIGN_TOP_MID, 0, FOOT2_Y);
-    lv_label_set_text(s_hint2_label, "长按中间键 暂停");
+    lv_label_set_text(s_hint2_label, "长按中键暂停  长按下键插旗");
 
     lv_obj_t *board_bg = panel_create(s_game_scr, BOARD_X - 3, BOARD_Y - 3,
                                       BOARD_PX + 6, BOARD_PX + 6);
@@ -499,7 +500,8 @@ static void header_refresh(void) {
     if (s_game.state == MSW_WON) face = ":D";
     if (s_game.state == MSW_LOST) face = "X(";
     lv_label_set_text(s_face_label, face);
-    snprintf(buf, sizeof(buf), "%03u", (unsigned)s_elapsed_s);
+    snprintf(buf, sizeof(buf), "%02u:%02u",
+             (unsigned)(s_elapsed_s / 60), (unsigned)(s_elapsed_s % 60));
     lv_label_set_text(s_timer_label, buf);
 }
 
