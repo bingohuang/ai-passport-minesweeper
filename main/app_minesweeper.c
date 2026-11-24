@@ -8,12 +8,11 @@
 // (思源黑体 SC,lv_font_conv 1.5.3 生成;Montserrat 仅作 ASCII/符号 fallback),见 app_fonts_init()。
 //
 // 按键(全局三键):
-//   单击 UP/DOWN = 光标移一格,快速连按(被按键组件合并为双击)走两格;
-//   方向默认上/下,横向模式下为左/右
+//   按下 UP/DOWN 立即移一格,连按连走;方向默认上/下,横向模式下为左/右
+//   长按 UP = 揭示(先退回按下时预走的一步,挖按下时的那格)
+//   长按 DOWN(中间键)= 暂停菜单:UP/DOWN 选择,单击 OK 确认
+//   (继续/重新开始/返回主页),再长按 DOWN 直接继续
 //   单击 OK = 切换纵向/横向移动;长按 OK = 插旗/拔旗
-//   长按 UP = 揭示;长按 DOWN(中间键)= 暂停菜单:
-//   单击 UP/DOWN 选择,单击 OK 确认(继续/重新开始/返回主页),
-//   再长按 DOWN 直接继续
 //
 // 首次启动先显示操作指南页,短按下键(OK)确认后写入 NVS 标记,
 // 之后启动直接进入标题页。
@@ -103,14 +102,6 @@ typedef enum {
     SCR_GUIDE,
 } app_screen_t;
 
-typedef enum {
-    MV_NONE = 0,
-    MV_UP,
-    MV_DOWN,
-    MV_LEFT,
-    MV_RIGHT,
-} move_dir_t;
-
 typedef struct {
     bsp_btn_t btn;
     bsp_btn_ev_t ev;
@@ -125,6 +116,7 @@ static bool s_horizontal;         // false = 上/下键纵向移动,true = 横�
 static bool s_paused;             // 暂停菜单打开中,计时冻结
 static int64_t s_pause_start_us;  // 进入暂停的时刻,继续时补偿计时起点
 static uint8_t s_pause_sel;       // 暂停菜单当前选中项
+static bool s_move_pending[3];    // 该键按下时已预走一步,待抬起清除或长按退回
 static int8_t s_boom_x = -1;      // 终局被踩中的雷格(-1 = 无)
 static int8_t s_boom_y = -1;
 static bool s_board_dirty = true;
@@ -589,6 +581,8 @@ static void game_start(void) {
     s_start_us = 0;
     s_end_recorded = false;
     s_paused = false;
+    s_move_pending[BSP_BTN_UP] = false;
+    s_move_pending[BSP_BTN_DOWN] = false;
     s_board_dirty = true;
     if (s_screen != SCR_GAME) {
         s_screen = SCR_GAME;
@@ -620,6 +614,17 @@ static void cursor_move(int dx, int dy) {
 // ---------------------------------------------------------------------------
 // 泵定时器(LVGL 任务):统一处理输入、计时、渲染
 // ---------------------------------------------------------------------------
+
+// 上/下键在当前方向模式下走一步;back=true 走反向,用于撤销长按前的预走步。
+static void cursor_step(bsp_btn_t btn, bool back) {
+    const int d = back ? -1 : 1;
+    if (btn == BSP_BTN_UP) {
+        if (s_horizontal) cursor_move(-d, 0); else cursor_move(0, -d);
+    } else {
+        if (s_horizontal) cursor_move(d, 0); else cursor_move(0, d);
+    }
+}
+
 static void pump(void) {
     input_event_t ev;
     while (xQueueReceive(s_input_queue, &ev, 0) == pdTRUE) {
@@ -647,19 +652,20 @@ static void pump(void) {
             continue;
         }
 
-        // 只认单击/双击/长按;PRESS/RELEASE 等原样忽略。
-        // OK:单击切方向、长按旗;UP:长按挖;DOWN:长按暂停。
-        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_DOUBLE && ev.ev != BSP_BTN_LONG) continue;
+        // 抬起:清除"按下已预走"标记,无其他动作。
+        if (ev.ev == BSP_BTN_RELEASE) {
+            s_move_pending[ev.btn] = false;
+            continue;
+        }
 
-        // 暂停菜单:UP/DOWN 单击选择(快速连按被合并为双击时跳两项),
-        // OK 单击确认,再长按 DOWN 直接继续;其余事件(含挖雷/插旗)一律忽略。
+        // 暂停菜单:UP/DOWN 按下即移动选择(连按连走),OK 单击确认,
+        // 再长按 DOWN 直接继续;其余事件(含挖雷/插旗)一律忽略。
         if (s_paused) {
-            if ((ev.ev == BSP_BTN_CLICK || ev.ev == BSP_BTN_DOUBLE) &&
+            if (ev.ev == BSP_BTN_PRESS &&
                 (ev.btn == BSP_BTN_UP || ev.btn == BSP_BTN_DOWN)) {
-                const int delta = (ev.btn == BSP_BTN_UP ? -1 : 1) *
-                                  (ev.ev == BSP_BTN_DOUBLE ? 2 : 1);
-                s_pause_sel = (uint8_t)((s_pause_sel + PAUSE_ITEM_COUNT +
-                                         delta % PAUSE_ITEM_COUNT) % PAUSE_ITEM_COUNT);
+                const int delta = (ev.btn == BSP_BTN_UP) ? -1 : 1;
+                s_pause_sel = (uint8_t)((s_pause_sel + PAUSE_ITEM_COUNT + delta) %
+                                        PAUSE_ITEM_COUNT);
                 pause_menu_update();
             } else if (ev.ev == BSP_BTN_LONG && ev.btn == BSP_BTN_DOWN) {
                 pause_resume();
@@ -673,14 +679,25 @@ static void pump(void) {
             continue;
         }
 
-        // 长按中间键(DOWN)呼出暂停菜单。
-        if (ev.btn == BSP_BTN_DOWN && ev.ev == BSP_BTN_LONG) {
-            pause_enter();
+        // UP/DOWN:按下(PRESS)立即走一步,连按连走。不能用单击/双击事件:
+        // 它们要等按键组件分类完毕(抬起后约 300ms)才上报,而且快速连按
+        // 3 次以上会被归为多次点击、不产生任何单击/双击事件。
+        if (ev.ev == BSP_BTN_PRESS &&
+            (ev.btn == BSP_BTN_UP || ev.btn == BSP_BTN_DOWN)) {
+            cursor_step(ev.btn, false);
+            s_move_pending[ev.btn] = true;
             continue;
         }
 
-        // 长按 UP 挖开当前格。
-        if (ev.btn == BSP_BTN_UP && ev.ev == BSP_BTN_LONG) {
+        // 长按先退回按下时预走的一步,让动作落在按下时的那一格:
+        // 长按中间键(DOWN)= 暂停菜单;长按 UP = 挖开当前格。
+        if (ev.ev == BSP_BTN_LONG && (ev.btn == BSP_BTN_UP || ev.btn == BSP_BTN_DOWN)) {
+            if (s_move_pending[ev.btn]) cursor_step(ev.btn, true);
+            s_move_pending[ev.btn] = false;
+            if (ev.btn == BSP_BTN_DOWN) {
+                pause_enter();
+                continue;
+            }
             const bool first = !s_game.mines_placed;
             const msw_state_t before = s_game.state;
             if (msw_reveal(&s_game, s_cx, s_cy) && first) {
@@ -694,6 +711,7 @@ static void pump(void) {
             continue;
         }
 
+        // OK:单击切方向,长按插旗/拔旗;其余事件无动作。
         if (ev.btn == BSP_BTN_OK) {
             if (ev.ev == BSP_BTN_CLICK) {
                 s_horizontal = !s_horizontal;
@@ -702,28 +720,7 @@ static void pump(void) {
                 if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
                 header_refresh();
             }
-            // OK 的双击无动作,显式吞掉,避免落入任何分支。
             continue;
-        }
-
-        // UP/DOWN:单击走一步,双击走两步——快速连按会被按键组件合并成
-        // 双击事件,按两步处理才能让"连按连走"成立;横向模式下上/下键即左/右移。
-        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_DOUBLE) continue;
-        move_dir_t dir = MV_NONE;
-        if (ev.btn == BSP_BTN_UP) {
-            dir = s_horizontal ? MV_LEFT : MV_UP;
-        } else if (ev.btn == BSP_BTN_DOWN) {
-            dir = s_horizontal ? MV_RIGHT : MV_DOWN;
-        }
-        const int steps = (ev.ev == BSP_BTN_DOUBLE) ? 2 : 1;
-        for (int i = 0; i < steps; i++) {
-            switch (dir) {
-            case MV_UP:    cursor_move(0, -1); break;
-            case MV_DOWN:  cursor_move(0, 1);  break;
-            case MV_LEFT:  cursor_move(-1, 0); break;
-            case MV_RIGHT: cursor_move(1, 0);  break;
-            default: break;
-            }
         }
     }
 

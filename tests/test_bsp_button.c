@@ -221,7 +221,7 @@ static void check_key_lock(void) {
     // A failed read counts as "no key": it cannot press, and a held key survives it.
     fail_read = 1; assert(hold(0, 200) == -1); fail_read = 0;
     assert(hold(ok, 100) == BSP_BTN_OK);
-    fail_read = 1; assert(hold(0, 60) == BSP_BTN_OK); fail_read = 0;
+    fail_read = 1; assert(hold(0, BSP_BTN_HOLD_MS - 10) == BSP_BTN_OK); fail_read = 0;
     assert(hold(ok, 20) == BSP_BTN_OK);
     assert(hold(released, 200) == -1);
 
