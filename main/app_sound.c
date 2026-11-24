@@ -44,6 +44,15 @@ static const sfx_seg_t WIN_SEGS[] = {
 static const sfx_seg_t LOSE_SEGS[] = {
     {392, 140, 6000}, {330, 140, 6000}, {262, 300, 6000},
 };
+static const sfx_seg_t TOGGLE_SEGS[] = {
+    {988, 40, 5000}, {1318, 50, 5000},
+};
+static const sfx_seg_t PAUSE_SEGS[] = {
+    {659, 60, 5000}, {494, 90, 5000},
+};
+static const sfx_seg_t CONFIRM_SEGS[] = {
+    {1046, 45, 5000}, {1568, 70, 5000},
+};
 
 typedef struct {
     const sfx_seg_t *segs;
@@ -60,6 +69,9 @@ static const sfx_def_t EFFECTS[] = {
     [SFX_BOOM]   = { NULL, 0, true, 400 },
     [SFX_WIN]    = { WIN_SEGS,    sizeof(WIN_SEGS) / sizeof(sfx_seg_t),    false, 0 },
     [SFX_LOSE]   = { LOSE_SEGS,   sizeof(LOSE_SEGS) / sizeof(sfx_seg_t),   false, 0 },
+    [SFX_TOGGLE] = { TOGGLE_SEGS, sizeof(TOGGLE_SEGS) / sizeof(sfx_seg_t), false, 0 },
+    [SFX_PAUSE]  = { PAUSE_SEGS,  sizeof(PAUSE_SEGS) / sizeof(sfx_seg_t),  false, 0 },
+    [SFX_CONFIRM] = { CONFIRM_SEGS, sizeof(CONFIRM_SEGS) / sizeof(sfx_seg_t), false, 0 },
 };
 
 static QueueHandle_t s_queue;
@@ -118,7 +130,7 @@ static void sound_task(void *arg) {
     for (;;) {
         app_sfx_t sfx;
         if (xQueueReceive(s_queue, &sfx, portMAX_DELAY) != pdTRUE) continue;
-        if (dead || (unsigned)sfx > SFX_LOSE) continue;
+        if (dead || (unsigned)sfx >= SFX_COUNT) continue;
         if (!ready) {
             if (bsp_audio_init() != ESP_OK ||
                 bsp_audio_set_format(SAMPLE_RATE, 16, 1) != ESP_OK) {

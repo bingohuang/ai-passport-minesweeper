@@ -427,6 +427,7 @@ static void pause_enter(void) {
     s_paused = true;
     s_pause_sel = 0;
     s_pause_start_us = esp_timer_get_time();
+    app_sound_play(SFX_PAUSE);
     pause_menu_update();
     lv_obj_remove_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_pause_overlay);
@@ -435,6 +436,7 @@ static void pause_enter(void) {
 static void pause_resume(void) {
     s_paused = false;
     lv_obj_add_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
+    app_sound_play(SFX_CONFIRM);
     // 把暂停时长补回计时起点,暂停期间不计时;未布雷时计时尚未开始。
     if (s_game.mines_placed) {
         s_start_us += esp_timer_get_time() - s_pause_start_us;
@@ -601,6 +603,7 @@ static void back_to_title(void) {
     s_screen = SCR_TITLE;
     s_paused = false;
     lv_obj_add_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
+    app_sound_play(SFX_CONFIRM);
     refresh_stats_labels();
     battery_label_update(s_batt_title_label);
     lv_screen_load(s_title_scr);
@@ -672,6 +675,7 @@ static void pump(void) {
                 const int delta = (ev.btn == BSP_BTN_UP) ? -1 : 1;
                 s_pause_sel = (uint8_t)((s_pause_sel + PAUSE_ITEM_COUNT + delta) %
                                         PAUSE_ITEM_COUNT);
+                app_sound_play(SFX_MOVE);
                 pause_menu_update();
             } else if (ev.ev == BSP_BTN_LONG && ev.btn == BSP_BTN_DOWN) {
                 pause_resume();
@@ -731,6 +735,7 @@ static void pump(void) {
             if (ev.ev == BSP_BTN_CLICK) {
                 s_horizontal = !s_horizontal;
                 hint_update();
+                app_sound_play(SFX_TOGGLE);
             } else if (ev.ev == BSP_BTN_LONG) {
                 if (msw_toggle_flag(&s_game, s_cx, s_cy)) {
                     s_board_dirty = true;
