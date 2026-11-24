@@ -31,6 +31,9 @@ A long press on DOWN freezes the timer and opens the pause menu: UP/DOWN move
 the selection, OK confirms (resume / restart / back to title), and another long
 press on DOWN resumes directly.
 
+On the very first boot an on-screen control guide appears before the title
+screen; confirming it with OK stores a flag in NVS so it never shows again.
+
 ## UI language
 
 The entire UI is in Simplified Chinese. Labels use application subset fonts

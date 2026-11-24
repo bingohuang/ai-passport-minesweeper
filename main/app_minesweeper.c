@@ -14,6 +14,9 @@
 //   长按 UP = 揭示;长按 DOWN(中间键)= 暂停菜单:
 //   单击 UP/DOWN 选择,单击 OK 确认(继续/重新开始/返回主页),
 //   再长按 DOWN 直接继续
+//
+// 首次启动先显示操作指南页,短按下键(OK)确认后写入 NVS 标记,
+// 之后启动直接进入标题页。
 #include "app_minesweeper.h"
 
 #include <stdio.h>
@@ -89,6 +92,7 @@ static const uint32_t PALETTE[] = {
 #define KEY_BEST      "best_s"
 #define KEY_WINS      "wins"
 #define KEY_GAMES     "games"
+#define KEY_GUIDE     "guide"  // 操作指南已确认标记
 
 // ---------------------------------------------------------------------------
 // 内部状态
@@ -96,6 +100,7 @@ static const uint32_t PALETTE[] = {
 typedef enum {
     SCR_TITLE = 0,
     SCR_GAME,
+    SCR_GUIDE,
 } app_screen_t;
 
 typedef enum {
@@ -131,6 +136,7 @@ static int s_last_soc = -2;       // 电量刷新节流;-2 = 尚未读
 
 static lv_obj_t *s_title_scr;
 static lv_obj_t *s_game_scr;
+static lv_obj_t *s_guide_scr;
 static lv_obj_t *s_best_label;
 static lv_obj_t *s_wins_label;
 static lv_obj_t *s_games_label;
@@ -356,8 +362,56 @@ static void battery_label_update(lv_obj_t *label) {
 // 动作描述统一按物理键位(上/中/下键)表述。
 static void hint_update(void) {
     lv_label_set_text(s_hint_label, s_horizontal
-                     ? "方向←→  长按上键挖雷"
-                     : "方向↑↓  长按上键挖雷");
+                     ? "方向←→  短按下键切换方向"
+                     : "方向↑↓  短按下键切换方向");
+}
+
+// ---------------------------------------------------------------------------
+// 首次启动的操作指南页:确认一次后写入 NVS,之后不再显示
+// ---------------------------------------------------------------------------
+static bool guide_seen(void) {
+    uint32_t seen = 0;
+    if (bsp_storage_get_u32(KEY_GUIDE, &seen) != ESP_OK) return false;
+    return seen != 0;
+}
+
+static void guide_mark_seen(void) {
+    if (bsp_storage_set_u32(KEY_GUIDE, 1) != ESP_OK) {
+        ESP_LOGW(TAG, "指南标记写入失败,下次启动会再显示");
+    }
+}
+
+static void guide_screen_build(void) {
+    s_guide_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_guide_scr, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(s_guide_scr, LV_OPA_COVER, 0);
+
+    lv_obj_t *title = label_create(s_guide_scr, &s_font_20, COLOR_TEXT,
+                                   LV_ALIGN_TOP_MID, 0, 44);
+    lv_label_set_text(title, "操作指南");
+
+    static const char *const LINES[] = {
+        "短按上/中键 移动光标",
+        "短按下键 切换方向",
+        "长按上键 挖雷",
+        "长按中键 暂停",
+        "长按下键 插旗",
+    };
+    for (uint8_t i = 0; i < 5; i++) {
+        lv_obj_t *line = label_create(s_guide_scr, &s_font_14, COLOR_TEXT,
+                                      LV_ALIGN_TOP_LEFT, 42, 92 + i * 26);
+        lv_label_set_text(line, LINES[i]);
+    }
+
+    lv_obj_t *pill = panel_create(s_guide_scr, 55, 258, 130, 30);
+    lv_obj_set_style_bg_color(pill, lv_color_hex(COLOR_ACCENT), 0);
+    lv_obj_set_style_border_width(pill, 0, 0);
+    lv_obj_set_style_radius(pill, 15, 0);
+    lv_obj_t *pill_label = lv_label_create(pill);
+    lv_obj_set_style_text_font(pill_label, &s_font_14, 0);
+    lv_obj_set_style_text_color(pill_label, lv_color_hex(COLOR_BG), 0);
+    lv_label_set_text(pill_label, "短按下键 开始");
+    lv_obj_center(pill_label);
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +502,7 @@ static void game_screen_build(void) {
     hint_update();
     s_hint2_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
                                  LV_ALIGN_TOP_MID, 0, FOOT2_Y);
-    lv_label_set_text(s_hint2_label, "长按中键暂停  长按下键插旗");
+    lv_label_set_text(s_hint2_label, "长按:上键挖雷 中键暂停 下键插旗");
 
     lv_obj_t *board_bg = panel_create(s_game_scr, BOARD_X - 3, BOARD_Y - 3,
                                       BOARD_PX + 6, BOARD_PX + 6);
@@ -569,6 +623,15 @@ static void cursor_move(int dx, int dy) {
 static void pump(void) {
     input_event_t ev;
     while (xQueueReceive(s_input_queue, &ev, 0) == pdTRUE) {
+        // 指南页:短按下键(OK)确认并写入 NVS,之后进入标题页。
+        if (s_screen == SCR_GUIDE) {
+            if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_OK) {
+                guide_mark_seen();
+                back_to_title();
+            }
+            continue;
+        }
+
         if (s_screen == SCR_TITLE) {
             if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_OK) game_start();
             continue;
@@ -721,8 +784,14 @@ esp_err_t app_minesweeper_start(void) {
     stats_load();
     title_screen_build();
     game_screen_build();
-    lv_screen_load(s_title_scr);
-    s_screen = SCR_TITLE;
+    guide_screen_build();
+    if (guide_seen()) {
+        lv_screen_load(s_title_scr);
+        s_screen = SCR_TITLE;
+    } else {
+        lv_screen_load(s_guide_scr);
+        s_screen = SCR_GUIDE;
+    }
 
     s_pump_timer = lv_timer_create(pump_timer_cb, 20, NULL);
     if (!s_pump_timer) {
