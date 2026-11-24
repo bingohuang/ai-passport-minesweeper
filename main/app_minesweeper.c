@@ -9,7 +9,10 @@
 //
 // 按键(全局三键):
 //   单击 UP/DOWN = 光标移一格(默认上/下,横向模式下为左/右,不自动重复)
-//   单击 OK = 切换纵向/横向移动;双击 OK = 揭示;长按 OK = 插旗/拔旗
+//   单击 OK = 切换纵向/横向移动;长按 OK = 插旗/拔旗
+//   长按 UP = 揭示;长按 DOWN(中间键)= 暂停菜单:
+//   单击 UP/DOWN 选择,单击 OK 确认(继续/重新开始/返回主页),
+//   再长按 DOWN 直接继续
 #include "app_minesweeper.h"
 
 #include <stdio.h>
@@ -37,7 +40,8 @@ static const char *TAG = "minesweeper";
 #define CELL         24
 #define BOARD_PX     (MSW_BOARD_W * CELL)  // 216
 #define HDR_Y        30
-#define FOOT_Y       290
+#define FOOT_Y       288
+#define FOOT2_Y      304
 
 #define COLOR_BG          0x0D1117
 #define COLOR_PANEL       0x161D27
@@ -112,6 +116,9 @@ static app_screen_t s_screen = SCR_TITLE;
 static uint8_t s_cx = MSW_BOARD_W / 2;
 static uint8_t s_cy = MSW_BOARD_H / 2;
 static bool s_horizontal;         // false = 上/下键纵向移动,true = 横向(OK 单击切换)
+static bool s_paused;             // 暂停菜单打开中,计时冻结
+static int64_t s_pause_start_us;  // 进入暂停的时刻,继续时补偿计时起点
+static uint8_t s_pause_sel;       // 暂停菜单当前选中项
 static int8_t s_boom_x = -1;      // 终局被踩中的雷格(-1 = 无)
 static int8_t s_boom_y = -1;
 static bool s_board_dirty = true;
@@ -132,9 +139,12 @@ static lv_obj_t *s_mines_label;
 static lv_obj_t *s_face_label;
 static lv_obj_t *s_timer_label;
 static lv_obj_t *s_hint_label;
+static lv_obj_t *s_hint2_label;
 static lv_obj_t *s_overlay;
 static lv_obj_t *s_overlay_title;
 static lv_obj_t *s_overlay_line;
+static lv_obj_t *s_pause_overlay;
+static lv_obj_t *s_pause_items[3];
 static lv_obj_t *s_board_canvas;
 static lv_timer_t *s_pump_timer;
 
@@ -344,8 +354,42 @@ static void battery_label_update(lv_obj_t *label) {
 // 底部提示随移动方向模式切换,箭头指示当前上/下键的实际走向。
 static void hint_update(void) {
     lv_label_set_text(s_hint_label, s_horizontal
-                     ? "方向←→  双击挖雷  长按插旗"
-                     : "方向↑↓  双击挖雷  长按插旗");
+                     ? "方向←→  长按↑挖雷  长按OK插旗"
+                     : "方向↑↓  长按↑挖雷  长按OK插旗");
+}
+
+// ---------------------------------------------------------------------------
+// 暂停菜单:继续 / 重新开始 / 返回主页
+// ---------------------------------------------------------------------------
+#define PAUSE_ITEM_COUNT 3
+static const char *const PAUSE_ITEMS[PAUSE_ITEM_COUNT] = {
+    "继续", "重新开始", "返回主页",
+};
+
+static void pause_menu_update(void) {
+    for (uint8_t i = 0; i < PAUSE_ITEM_COUNT; i++) {
+        lv_obj_set_style_text_color(s_pause_items[i],
+                                    lv_color_hex(i == s_pause_sel ? COLOR_ACCENT : COLOR_TEXT),
+                                    0);
+    }
+}
+
+static void pause_enter(void) {
+    s_paused = true;
+    s_pause_sel = 0;
+    s_pause_start_us = esp_timer_get_time();
+    pause_menu_update();
+    lv_obj_remove_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_pause_overlay);
+}
+
+static void pause_resume(void) {
+    s_paused = false;
+    lv_obj_add_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
+    // 把暂停时长补回计时起点,暂停期间不计时;未布雷时计时尚未开始。
+    if (s_game.mines_placed) {
+        s_start_us += esp_timer_get_time() - s_pause_start_us;
+    }
 }
 
 static void title_screen_build(void) {
@@ -400,6 +444,9 @@ static void game_screen_build(void) {
     s_hint_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
                                 LV_ALIGN_TOP_MID, 0, FOOT_Y);
     hint_update();
+    s_hint2_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
+                                 LV_ALIGN_TOP_MID, 0, FOOT2_Y);
+    lv_label_set_text(s_hint2_label, "长按中间键 暂停");
 
     lv_obj_t *board_bg = panel_create(s_game_scr, BOARD_X - 3, BOARD_Y - 3,
                                       BOARD_PX + 6, BOARD_PX + 6);
@@ -426,6 +473,18 @@ static void game_screen_build(void) {
                                      LV_ALIGN_TOP_MID, 0, 70);
     lv_label_set_text(ov_hint, "单击再来  长按回标题");
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+
+    // 暂停浮层:先建后藏,长按中间键(DOWN)时弹出。
+    s_pause_overlay = panel_create(s_game_scr, 20, 96, 200, 128);
+    lv_obj_t *pause_title = label_create(s_pause_overlay, &s_font_20, COLOR_ACCENT,
+                                         LV_ALIGN_TOP_MID, 0, 10);
+    lv_label_set_text(pause_title, "已暂停");
+    for (uint8_t i = 0; i < PAUSE_ITEM_COUNT; i++) {
+        s_pause_items[i] = label_create(s_pause_overlay, &s_font_14, COLOR_TEXT,
+                                        LV_ALIGN_TOP_MID, 0, 46 + i * 24);
+        lv_label_set_text(s_pause_items[i], PAUSE_ITEMS[i]);
+    }
+    lv_obj_add_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---------------------------------------------------------------------------
@@ -472,12 +531,14 @@ static void game_start(void) {
     s_elapsed_s = 0;
     s_start_us = 0;
     s_end_recorded = false;
+    s_paused = false;
     s_board_dirty = true;
     if (s_screen != SCR_GAME) {
         s_screen = SCR_GAME;
         lv_screen_load(s_game_scr);
     }
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
     hint_update();
     header_refresh();
     battery_label_update(s_batt_game_label);
@@ -485,6 +546,8 @@ static void game_start(void) {
 
 static void back_to_title(void) {
     s_screen = SCR_TITLE;
+    s_paused = false;
+    lv_obj_add_flag(s_pause_overlay, LV_OBJ_FLAG_HIDDEN);
     refresh_stats_labels();
     battery_label_update(s_batt_title_label);
     lv_screen_load(s_title_scr);
@@ -498,7 +561,7 @@ static void cursor_move(int dx, int dy) {
 }
 
 // ---------------------------------------------------------------------------
-// 泵定时器(LVGL 任务):统一处理输入、长按重复、计时、渲染
+// 泵定时器(LVGL 任务):统一处理输入、计时、渲染
 // ---------------------------------------------------------------------------
 static void pump(void) {
     input_event_t ev;
@@ -518,26 +581,58 @@ static void pump(void) {
             continue;
         }
 
-        // 只认单击/双击/长按;PRESS/RELEASE 等原样忽略。
-        // OK:单击切方向、双击挖、长按旗;UP/DOWN:单击走一步,不自动重复——
-        // 横向移动代价已由边缘环绕补偿,重复移动反而难停在一格上。
-        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_DOUBLE && ev.ev != BSP_BTN_LONG) continue;
+        // 只认单击与长按;PRESS/DOUBLE/RELEASE 等原样忽略(无双击动作)。
+        // OK:单击切方向、长按旗;UP:长按挖;DOWN:长按暂停;
+        // UP/DOWN 单击走一步,不自动重复——横向移动代价已由边缘环绕补偿,
+        // 重复移动反而难停在一格上。
+        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_LONG) continue;
+
+        // 暂停菜单:UP/DOWN 单击选择,OK 单击确认,再长按 DOWN 直接继续;
+        // 其余事件(含挖雷/插旗)在暂停期间一律忽略。
+        if (s_paused) {
+            if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_UP) {
+                s_pause_sel = (uint8_t)((s_pause_sel + PAUSE_ITEM_COUNT - 1) % PAUSE_ITEM_COUNT);
+                pause_menu_update();
+            } else if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_DOWN) {
+                s_pause_sel = (uint8_t)((s_pause_sel + 1) % PAUSE_ITEM_COUNT);
+                pause_menu_update();
+            } else if (ev.ev == BSP_BTN_LONG && ev.btn == BSP_BTN_DOWN) {
+                pause_resume();
+            } else if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_OK) {
+                switch (s_pause_sel) {
+                case 0:  pause_resume();  break;
+                case 1:  game_start();    break;
+                default: back_to_title(); break;
+                }
+            }
+            continue;
+        }
+
+        // 长按中间键(DOWN)呼出暂停菜单。
+        if (ev.btn == BSP_BTN_DOWN && ev.ev == BSP_BTN_LONG) {
+            pause_enter();
+            continue;
+        }
+
+        // 长按 UP 挖开当前格。
+        if (ev.btn == BSP_BTN_UP && ev.ev == BSP_BTN_LONG) {
+            const bool first = !s_game.mines_placed;
+            const msw_state_t before = s_game.state;
+            if (msw_reveal(&s_game, s_cx, s_cy) && first) {
+                s_start_us = esp_timer_get_time();
+            }
+            if (before != MSW_LOST && s_game.state == MSW_LOST) {
+                s_boom_x = (int8_t)s_cx;  // 终局高亮被踩中的雷
+                s_boom_y = (int8_t)s_cy;
+            }
+            s_board_dirty = true;
+            continue;
+        }
 
         if (ev.btn == BSP_BTN_OK) {
             if (ev.ev == BSP_BTN_CLICK) {
                 s_horizontal = !s_horizontal;
                 hint_update();
-            } else if (ev.ev == BSP_BTN_DOUBLE) {
-                const bool first = !s_game.mines_placed;
-                const msw_state_t before = s_game.state;
-                if (msw_reveal(&s_game, s_cx, s_cy) && first) {
-                    s_start_us = esp_timer_get_time();
-                }
-                if (before != MSW_LOST && s_game.state == MSW_LOST) {
-                    s_boom_x = (int8_t)s_cx;  // 终局高亮被踩中的雷
-                    s_boom_y = (int8_t)s_cy;
-                }
-                s_board_dirty = true;
             } else {  // BSP_BTN_LONG
                 if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
                 header_refresh();
@@ -562,9 +657,9 @@ static void pump(void) {
         }
     }
 
-    // 计时(250ms 节流):开局后、终局前
+    // 计时(250ms 节流):开局后、终局前;暂停期间冻结
     const uint32_t tick = now_ms();
-    if (s_screen == SCR_GAME && s_game.mines_placed &&
+    if (s_screen == SCR_GAME && s_game.mines_placed && !s_paused &&
         (s_game.state == MSW_PLAYING || s_game.state == MSW_READY)) {
         s_elapsed_s = (uint32_t)((esp_timer_get_time() - s_start_us) / 1000000LL);
     }

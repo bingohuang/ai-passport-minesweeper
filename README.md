@@ -17,15 +17,19 @@ all safe cells to win; hit a mine and the board shows every unflagged mine.
 
 ## Controls
 
-| Button | Click | Double click | Long press |
-| --- | --- | --- | --- |
-| UP | Move cursor up (left in horizontal mode) | — | — |
-| DOWN | Move cursor down (right in horizontal mode) | — | — |
-| OK | Toggle cursor direction (vertical ↔ horizontal) | Reveal | Flag / unflag |
+| Button | Click | Long press |
+| --- | --- | --- |
+| UP | Move cursor up (left in horizontal mode) | Reveal |
+| DOWN | Move cursor down (right in horizontal mode) | Pause menu |
+| OK | Toggle cursor direction (vertical ↔ horizontal) | Flag / unflag |
 
 The cursor wraps around the board edges, and the footer hint shows the current
 direction mode. On the title screen, OK starts a game. On the end overlay, OK
 starts a new game and a long press on OK returns to the title screen.
+
+A long press on DOWN freezes the timer and opens the pause menu: UP/DOWN move
+the selection, OK confirms (resume / restart / back to title), and another long
+press on DOWN resumes directly.
 
 ## UI language
 
