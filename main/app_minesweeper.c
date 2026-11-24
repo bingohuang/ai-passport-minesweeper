@@ -8,9 +8,8 @@
 // (思源黑体 SC,lv_font_conv 1.5.3 生成;Montserrat 仅作 ASCII/符号 fallback),见 app_fonts_init()。
 //
 // 按键(全局三键):
-//   按下 UP/DOWN 立即移一格,连按连走;方向默认上/下,横向模式下为左/右
-//   长按 UP = 揭示(先退回按下时预走的一步,挖按下时的那格)
-//   长按 DOWN(中间键)= 暂停菜单:UP/DOWN 选择,单击 OK 确认
+//   短按 UP/DOWN = 抬起时移一格,连按连走;方向默认上/下,横向模式下为左/右
+//   长按 UP = 揭示;长按 DOWN(中间键)= 暂停菜单:UP/DOWN 选择,单击 OK 确认
 //   (继续/重新开始/返回主页),再长按 DOWN 直接继续
 //   单击 OK = 切换纵向/横向移动;长按 OK = 插旗/拔旗
 //
@@ -116,7 +115,7 @@ static bool s_horizontal;         // false = 上/下键纵向移动,true = 横�
 static bool s_paused;             // 暂停菜单打开中,计时冻结
 static int64_t s_pause_start_us;  // 进入暂停的时刻,继续时补偿计时起点
 static uint8_t s_pause_sel;       // 暂停菜单当前选中项
-static bool s_move_pending[3];    // 该键按下时已预走一步,待抬起清除或长按退回
+static bool s_step_armed[3];      // 该键在游戏内按下,抬起时走一步;长按则消费掉
 static int8_t s_boom_x = -1;      // 终局被踩中的雷格(-1 = 无)
 static int8_t s_boom_y = -1;
 static bool s_board_dirty = true;
@@ -581,8 +580,8 @@ static void game_start(void) {
     s_start_us = 0;
     s_end_recorded = false;
     s_paused = false;
-    s_move_pending[BSP_BTN_UP] = false;
-    s_move_pending[BSP_BTN_DOWN] = false;
+    s_step_armed[BSP_BTN_UP] = false;
+    s_step_armed[BSP_BTN_DOWN] = false;
     s_board_dirty = true;
     if (s_screen != SCR_GAME) {
         s_screen = SCR_GAME;
@@ -615,13 +614,12 @@ static void cursor_move(int dx, int dy) {
 // 泵定时器(LVGL 任务):统一处理输入、计时、渲染
 // ---------------------------------------------------------------------------
 
-// 上/下键在当前方向模式下走一步;back=true 走反向,用于撤销长按前的预走步。
-static void cursor_step(bsp_btn_t btn, bool back) {
-    const int d = back ? -1 : 1;
+// 上/下键在当前方向模式下走一步。
+static void cursor_step(bsp_btn_t btn) {
     if (btn == BSP_BTN_UP) {
-        if (s_horizontal) cursor_move(-d, 0); else cursor_move(0, -d);
+        if (s_horizontal) cursor_move(-1, 0); else cursor_move(0, -1);
     } else {
-        if (s_horizontal) cursor_move(d, 0); else cursor_move(0, d);
+        if (s_horizontal) cursor_move(1, 0); else cursor_move(0, 1);
     }
 }
 
@@ -652,9 +650,13 @@ static void pump(void) {
             continue;
         }
 
-        // 抬起:清除"按下已预走"标记,无其他动作。
+        // 抬起:若本次按下未被长按消费,走一步。移动放在抬起而不是按下,
+        // 长按挖雷/暂停才不会先走一格再退回(退格);连按节奏不受影响。
         if (ev.ev == BSP_BTN_RELEASE) {
-            s_move_pending[ev.btn] = false;
+            if (s_step_armed[ev.btn]) {
+                s_step_armed[ev.btn] = false;
+                cursor_step(ev.btn);
+            }
             continue;
         }
 
@@ -679,21 +681,19 @@ static void pump(void) {
             continue;
         }
 
-        // UP/DOWN:按下(PRESS)立即走一步,连按连走。不能用单击/双击事件:
+        // UP/DOWN:按下先武装,抬起时走一步,连按连走。不能用单击/双击事件:
         // 它们要等按键组件分类完毕(抬起后约 300ms)才上报,而且快速连按
         // 3 次以上会被归为多次点击、不产生任何单击/双击事件。
         if (ev.ev == BSP_BTN_PRESS &&
             (ev.btn == BSP_BTN_UP || ev.btn == BSP_BTN_DOWN)) {
-            cursor_step(ev.btn, false);
-            s_move_pending[ev.btn] = true;
+            s_step_armed[ev.btn] = true;
             continue;
         }
 
-        // 长按先退回按下时预走的一步,让动作落在按下时的那一格:
-        // 长按中间键(DOWN)= 暂停菜单;长按 UP = 挖开当前格。
+        // 长按消费本次按下(抬起不再走步):长按中间键(DOWN)= 暂停菜单;
+        // 长按 UP = 挖开当前格。
         if (ev.ev == BSP_BTN_LONG && (ev.btn == BSP_BTN_UP || ev.btn == BSP_BTN_DOWN)) {
-            if (s_move_pending[ev.btn]) cursor_step(ev.btn, true);
-            s_move_pending[ev.btn] = false;
+            s_step_armed[ev.btn] = false;
             if (ev.btn == BSP_BTN_DOWN) {
                 pause_enter();
                 continue;
