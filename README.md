@@ -47,6 +47,13 @@ symbols. Static coverage is gated by `tools/check_glyphs.py`.
 Best win time, win count, and total games are stored in NVS and survive power
 loss. They are shown on the title screen and the end overlay.
 
+## Sound effects
+
+Short synthesized effects (16 kHz square waves / noise through the ES8311)
+mark game start, cursor moves, reveals, flagging, hitting a mine (noise burst
+followed by the lose jingle), and winning (rising arpeggio). Playback runs in a
+dedicated worker task so audio never blocks key handling or rendering.
+
 ## Layout
 
 - `main/minesweeper_model.c/h` — pure game logic (board, mine placement, flood

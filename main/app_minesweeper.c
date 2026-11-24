@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app_sound.h"
+
 #include "bsp_battery.h"
 #include "bsp_storage.h"
 #include "esp_log.h"
@@ -571,6 +573,7 @@ static void overlay_show(void) {
 
 static void game_start(void) {
     msw_init(&s_game, esp_random());
+    app_sound_play(SFX_START);
     s_cx = MSW_BOARD_W / 2;
     s_cy = MSW_BOARD_H / 2;
     s_horizontal = false;         // 每局从纵向移动开始
@@ -616,6 +619,7 @@ static void cursor_move(int dx, int dy) {
 
 // 上/下键在当前方向模式下走一步。
 static void cursor_step(bsp_btn_t btn) {
+    app_sound_play(SFX_MOVE);
     if (btn == BSP_BTN_UP) {
         if (s_horizontal) cursor_move(-1, 0); else cursor_move(0, -1);
     } else {
@@ -700,12 +704,23 @@ static void pump(void) {
             }
             const bool first = !s_game.mines_placed;
             const msw_state_t before = s_game.state;
-            if (msw_reveal(&s_game, s_cx, s_cy) && first) {
+            const bool changed = msw_reveal(&s_game, s_cx, s_cy);
+            if (changed && first) {
                 s_start_us = esp_timer_get_time();
             }
             if (before != MSW_LOST && s_game.state == MSW_LOST) {
                 s_boom_x = (int8_t)s_cx;  // 终局高亮被踩中的雷
                 s_boom_y = (int8_t)s_cy;
+            }
+            if (changed) {
+                if (s_game.state == MSW_LOST) {
+                    app_sound_play(SFX_BOOM);  // 踩雷 = 爆音 + 失败音连播
+                    app_sound_play(SFX_LOSE);
+                } else if (s_game.state == MSW_WON) {
+                    app_sound_play(SFX_WIN);
+                } else {
+                    app_sound_play(SFX_REVEAL);
+                }
             }
             s_board_dirty = true;
             continue;
@@ -717,7 +732,10 @@ static void pump(void) {
                 s_horizontal = !s_horizontal;
                 hint_update();
             } else if (ev.ev == BSP_BTN_LONG) {
-                if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
+                if (msw_toggle_flag(&s_game, s_cx, s_cy)) {
+                    s_board_dirty = true;
+                    app_sound_play(SFX_FLAG);
+                }
                 header_refresh();
             }
             continue;
@@ -772,6 +790,11 @@ static void pump_timer_cb(lv_timer_t *timer) {
 esp_err_t app_minesweeper_start(void) {
     s_input_queue = xQueueCreate(INPUT_DEPTH, sizeof(input_event_t));
     if (!s_input_queue) return ESP_ERR_NO_MEM;
+
+    // 音效失败不阻塞游戏(无声可玩),音频硬件在首次发声时才初始化。
+    if (app_sound_init() != ESP_OK) {
+        ESP_LOGW(TAG, "音效任务创建失败,游戏将无声");
+    }
 
     // LV_DRAW_BUF_DEFINE_STATIC 不填 handlers,必须显式 INIT,否则
     // lv_canvas_set_draw_buf 会静默拒绝并在首次取回缓冲区时崩溃(真机复现)。

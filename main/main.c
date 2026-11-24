@@ -1,9 +1,10 @@
 // main/main.c —— FoloToy AI Passport 扫雷应用入口:初始化 + 按键分发。
 //
 // 本分支固件为扫雷衍生应用,启动后直接进入游戏标题页(见 app_minesweeper.c)。
-// 按键语义(应用内统一,详见 app_minesweeper.c):
-//   上/下 短按   光标上/下        上/下 长按   光标左/右(按住重复)
-//   确定  短按   揭示 / 确认       确定  长按   插旗/拔旗
+// 按键语义(应用内统一,详见 app_minesweeper.c 头部注释):
+//   上/下 短按   光标移动(抬起时走一步,连按连走)
+//   上键 长按   揭示        中键 长按   暂停菜单
+//   下键 短按   切换方向    下键 长按   插旗/拔旗
 #include "app_minesweeper.h"
 #include "bsp_battery.h"
 #include "bsp_button.h"
