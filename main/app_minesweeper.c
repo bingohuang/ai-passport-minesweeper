@@ -8,7 +8,8 @@
 // (思源黑体 SC,lv_font_conv 1.5.3 生成;Montserrat 仅作 ASCII/符号 fallback),见 app_fonts_init()。
 //
 // 按键(全局三键):
-//   单击 UP/DOWN = 光标移一格(默认上/下,横向模式下为左/右,不自动重复)
+//   单击 UP/DOWN = 光标移一格,快速连按(被按键组件合并为双击)走两格;
+//   方向默认上/下,横向模式下为左/右
 //   单击 OK = 切换纵向/横向移动;长按 OK = 插旗/拔旗
 //   长按 UP = 揭示;长按 DOWN(中间键)= 暂停菜单:
 //   单击 UP/DOWN 选择,单击 OK 确认(继续/重新开始/返回主页),
@@ -581,20 +582,19 @@ static void pump(void) {
             continue;
         }
 
-        // 只认单击与长按;PRESS/DOUBLE/RELEASE 等原样忽略(无双击动作)。
-        // OK:单击切方向、长按旗;UP:长按挖;DOWN:长按暂停;
-        // UP/DOWN 单击走一步,不自动重复——横向移动代价已由边缘环绕补偿,
-        // 重复移动反而难停在一格上。
-        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_LONG) continue;
+        // 只认单击/双击/长按;PRESS/RELEASE 等原样忽略。
+        // OK:单击切方向、长按旗;UP:长按挖;DOWN:长按暂停。
+        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_DOUBLE && ev.ev != BSP_BTN_LONG) continue;
 
-        // 暂停菜单:UP/DOWN 单击选择,OK 单击确认,再长按 DOWN 直接继续;
-        // 其余事件(含挖雷/插旗)在暂停期间一律忽略。
+        // 暂停菜单:UP/DOWN 单击选择(快速连按被合并为双击时跳两项),
+        // OK 单击确认,再长按 DOWN 直接继续;其余事件(含挖雷/插旗)一律忽略。
         if (s_paused) {
-            if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_UP) {
-                s_pause_sel = (uint8_t)((s_pause_sel + PAUSE_ITEM_COUNT - 1) % PAUSE_ITEM_COUNT);
-                pause_menu_update();
-            } else if (ev.ev == BSP_BTN_CLICK && ev.btn == BSP_BTN_DOWN) {
-                s_pause_sel = (uint8_t)((s_pause_sel + 1) % PAUSE_ITEM_COUNT);
+            if ((ev.ev == BSP_BTN_CLICK || ev.ev == BSP_BTN_DOUBLE) &&
+                (ev.btn == BSP_BTN_UP || ev.btn == BSP_BTN_DOWN)) {
+                const int delta = (ev.btn == BSP_BTN_UP ? -1 : 1) *
+                                  (ev.ev == BSP_BTN_DOUBLE ? 2 : 1);
+                s_pause_sel = (uint8_t)((s_pause_sel + PAUSE_ITEM_COUNT +
+                                         delta % PAUSE_ITEM_COUNT) % PAUSE_ITEM_COUNT);
                 pause_menu_update();
             } else if (ev.ev == BSP_BTN_LONG && ev.btn == BSP_BTN_DOWN) {
                 pause_resume();
@@ -633,27 +633,32 @@ static void pump(void) {
             if (ev.ev == BSP_BTN_CLICK) {
                 s_horizontal = !s_horizontal;
                 hint_update();
-            } else {  // BSP_BTN_LONG
+            } else if (ev.ev == BSP_BTN_LONG) {
                 if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
                 header_refresh();
             }
+            // OK 的双击无动作,显式吞掉,避免落入任何分支。
             continue;
         }
 
-        // UP/DOWN 只响应单击;横向模式下上/下键即左/右移。
-        if (ev.ev != BSP_BTN_CLICK) continue;
+        // UP/DOWN:单击走一步,双击走两步——快速连按会被按键组件合并成
+        // 双击事件,按两步处理才能让"连按连走"成立;横向模式下上/下键即左/右移。
+        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_DOUBLE) continue;
         move_dir_t dir = MV_NONE;
         if (ev.btn == BSP_BTN_UP) {
             dir = s_horizontal ? MV_LEFT : MV_UP;
         } else if (ev.btn == BSP_BTN_DOWN) {
             dir = s_horizontal ? MV_RIGHT : MV_DOWN;
         }
-        switch (dir) {
-        case MV_UP:    cursor_move(0, -1); break;
-        case MV_DOWN:  cursor_move(0, 1);  break;
-        case MV_LEFT:  cursor_move(-1, 0); break;
-        case MV_RIGHT: cursor_move(1, 0);  break;
-        default: break;
+        const int steps = (ev.ev == BSP_BTN_DOUBLE) ? 2 : 1;
+        for (int i = 0; i < steps; i++) {
+            switch (dir) {
+            case MV_UP:    cursor_move(0, -1); break;
+            case MV_DOWN:  cursor_move(0, 1);  break;
+            case MV_LEFT:  cursor_move(-1, 0); break;
+            case MV_RIGHT: cursor_move(1, 0);  break;
+            default: break;
+            }
         }
     }
 
