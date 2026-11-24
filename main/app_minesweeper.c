@@ -8,8 +8,8 @@
 // (思源黑体 SC,lv_font_conv 1.5.3 生成;Montserrat 仅作 ASCII/符号 fallback),见 app_fonts_init()。
 //
 // 按键(全局三键):
-//   单击 UP/DOWN = 光标上/下;长按 = 左/右移一格(不自动重复)
-//   单击 OK = 揭示;长按 OK = 插旗/拔旗
+//   单击 UP/DOWN = 光标移一格(默认上/下,横向模式下为左/右,不自动重复)
+//   单击 OK = 切换纵向/横向移动;双击 OK = 揭示;长按 OK = 插旗/拔旗
 #include "app_minesweeper.h"
 
 #include <stdio.h>
@@ -111,6 +111,7 @@ static msw_stats_t s_stats;
 static app_screen_t s_screen = SCR_TITLE;
 static uint8_t s_cx = MSW_BOARD_W / 2;
 static uint8_t s_cy = MSW_BOARD_H / 2;
+static bool s_horizontal;         // false = 上/下键纵向移动,true = 横向(OK 单击切换)
 static int8_t s_boom_x = -1;      // 终局被踩中的雷格(-1 = 无)
 static int8_t s_boom_y = -1;
 static bool s_board_dirty = true;
@@ -340,6 +341,13 @@ static void battery_label_update(lv_obj_t *label) {
     }
 }
 
+// 底部提示随移动方向模式切换,箭头指示当前上/下键的实际走向。
+static void hint_update(void) {
+    lv_label_set_text(s_hint_label, s_horizontal
+                     ? "方向←→  双击挖雷  长按插旗"
+                     : "方向↑↓  双击挖雷  长按插旗");
+}
+
 static void title_screen_build(void) {
     s_title_scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_title_scr, lv_color_hex(COLOR_BG), 0);
@@ -391,7 +399,7 @@ static void game_screen_build(void) {
                                      LV_ALIGN_TOP_RIGHT, -14, 10);
     s_hint_label = label_create(s_game_scr, &s_font_14, COLOR_DIM,
                                 LV_ALIGN_TOP_MID, 0, FOOT_Y);
-    lv_label_set_text(s_hint_label, "单击挖雷  长按插旗");
+    hint_update();
 
     lv_obj_t *board_bg = panel_create(s_game_scr, BOARD_X - 3, BOARD_Y - 3,
                                       BOARD_PX + 6, BOARD_PX + 6);
@@ -458,6 +466,7 @@ static void game_start(void) {
     msw_init(&s_game, esp_random());
     s_cx = MSW_BOARD_W / 2;
     s_cy = MSW_BOARD_H / 2;
+    s_horizontal = false;         // 每局从纵向移动开始
     s_boom_x = -1;
     s_boom_y = -1;
     s_elapsed_s = 0;
@@ -469,6 +478,7 @@ static void game_start(void) {
         lv_screen_load(s_game_scr);
     }
     lv_obj_add_flag(s_overlay, LV_OBJ_FLAG_HIDDEN);
+    hint_update();
     header_refresh();
     battery_label_update(s_batt_game_label);
 }
@@ -508,21 +518,16 @@ static void pump(void) {
             continue;
         }
 
-        // 只认单击与长按;PRESS/DOUBLE/RELEASE 等原样忽略。
-        // 单击=上下,长按=左右;都只走一步,不自动重复——
+        // 只认单击/双击/长按;PRESS/RELEASE 等原样忽略。
+        // OK:单击切方向、双击挖、长按旗;UP/DOWN:单击走一步,不自动重复——
         // 横向移动代价已由边缘环绕补偿,重复移动反而难停在一格上。
-        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_LONG) continue;
+        if (ev.ev != BSP_BTN_CLICK && ev.ev != BSP_BTN_DOUBLE && ev.ev != BSP_BTN_LONG) continue;
 
-        const bool is_long = (ev.ev == BSP_BTN_LONG);
-        move_dir_t dir = MV_NONE;
-        switch (ev.btn) {
-        case BSP_BTN_UP:    dir = is_long ? MV_LEFT  : MV_UP;   break;
-        case BSP_BTN_DOWN:  dir = is_long ? MV_RIGHT : MV_DOWN; break;
-        case BSP_BTN_OK:
-            if (is_long) {
-                if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
-                header_refresh();
-            } else {
+        if (ev.btn == BSP_BTN_OK) {
+            if (ev.ev == BSP_BTN_CLICK) {
+                s_horizontal = !s_horizontal;
+                hint_update();
+            } else if (ev.ev == BSP_BTN_DOUBLE) {
                 const bool first = !s_game.mines_placed;
                 const msw_state_t before = s_game.state;
                 if (msw_reveal(&s_game, s_cx, s_cy) && first) {
@@ -533,8 +538,20 @@ static void pump(void) {
                     s_boom_y = (int8_t)s_cy;
                 }
                 s_board_dirty = true;
+            } else {  // BSP_BTN_LONG
+                if (msw_toggle_flag(&s_game, s_cx, s_cy)) s_board_dirty = true;
+                header_refresh();
             }
             continue;
+        }
+
+        // UP/DOWN 只响应单击;横向模式下上/下键即左/右移。
+        if (ev.ev != BSP_BTN_CLICK) continue;
+        move_dir_t dir = MV_NONE;
+        if (ev.btn == BSP_BTN_UP) {
+            dir = s_horizontal ? MV_LEFT : MV_UP;
+        } else if (ev.btn == BSP_BTN_DOWN) {
+            dir = s_horizontal ? MV_RIGHT : MV_DOWN;
         }
         switch (dir) {
         case MV_UP:    cursor_move(0, -1); break;

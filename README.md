@@ -17,15 +17,15 @@ all safe cells to win; hit a mine and the board shows every unflagged mine.
 
 ## Controls
 
-| Button | Click | Long press |
-| --- | --- | --- |
-| UP | Move cursor up | Move cursor left |
-| DOWN | Move cursor down | Move cursor right |
-| OK | Reveal | Flag / unflag |
+| Button | Click | Double click | Long press |
+| --- | --- | --- | --- |
+| UP | Move cursor up (left in horizontal mode) | — | — |
+| DOWN | Move cursor down (right in horizontal mode) | — | — |
+| OK | Toggle cursor direction (vertical ↔ horizontal) | Reveal | Flag / unflag |
 
-The cursor wraps around the board edges. On the title screen, OK starts a game.
-On the end overlay, OK starts a new game and a long press on OK returns to the
-title screen.
+The cursor wraps around the board edges, and the footer hint shows the current
+direction mode. On the title screen, OK starts a game. On the end overlay, OK
+starts a new game and a long press on OK returns to the title screen.
 
 ## UI language
 
